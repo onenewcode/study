@@ -1,5 +1,9 @@
 # opencl
 
+## 文档
+
+https://registry.khronos.org/OpenCL/specs/3.0-unified/html/OpenCL_API.html
+
 ## 安装
 
 https://github.com/KhronosGroup/OpenCL-Guide/blob/main/chapters/getting_started_linux.md

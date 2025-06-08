@@ -1,0 +1,20 @@
+{
+    "files.associations": {
+        "*.js": "javascript",
+        "exception": "cpp",
+        "initializer_list": "cpp",
+        "iosfwd": "cpp",
+        "new": "cpp",
+        "ostream": "cpp",
+        "tuple": "cpp",
+        "type_traits": "cpp",
+        "utility": "cpp",
+        "iomanip": "cpp",
+        "random": "cpp",
+        "algorithm": "cpp",
+        "cmath": "cpp",
+        "iostream": "cpp",
+        "format": "cpp",
+        "chrono": "cpp"
+    }
+}
