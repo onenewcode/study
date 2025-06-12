@@ -1,0 +1,68 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "(lldb) 启动",
+
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/llama-simple.exe", //
+            "args": [    //
+                "-m", "/root/Split-DeepSeek-R1-Distill-Qwen-1.5B-v0.0-F16.gguf",
+                "-n", "32",
+                "-ngl", "99",
+                "Hello my name is"
+            ],
+
+            "cwd": "${workspaceFolder}",
+
+        },
+        {
+            "name": "C/C++: cl.exe build and debug active file",
+
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/Debug/llama-simple.exe", //
+            "args": [    //
+                "-m", "F:\\edged\\Split-DeepSeek-R1-Distill-Qwen-1.5B-v0.0-F16.gguf",
+                "-n", "32",
+                "-ngl", "99",
+                "给我讲一个故事"
+            ],
+
+            "cwd": "${workspaceFolder}",
+            "externalConsole": false,
+        },
+        {
+            "name": "(gdb) 启动",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/llama-simple", //
+            "args": [    //
+                "-m", "output.gguf",
+                "-n", "32",
+                "-ngl", "99",
+                "Hello my name is"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb", //
+            "setupCommands": [
+                {
+                    "description": "为 gdb 启用整齐打印",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "将反汇编风格设置为 Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ],
+            "miDebuggerPath": "/usr/bin/gdb" //
+        },
+
+    ]
+}
