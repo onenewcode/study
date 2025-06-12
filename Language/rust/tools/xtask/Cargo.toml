@@ -1,0 +1,8 @@
+[workspace]
+
+members = [
+    "xtask",
+]
+
+[dependencies]
+clap = "4.5.40"
