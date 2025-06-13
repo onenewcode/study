@@ -374,7 +374,7 @@ pub fn gen_rand_block_q8_0() -> BlockQ8_0 {
     let d: f32 = rng.gen_range(0.0..2.0);
     let mut qs: [i8; 32] = [0; 32];
     for i in 0..32 {
-        qs[i] = rng.gen::<i8>();
+        qs[i] = rng.gen_range(i8::MIN..=i8::MAX);
     }
     BlockQ8_0 {
         d: f16::from_f32(d),
