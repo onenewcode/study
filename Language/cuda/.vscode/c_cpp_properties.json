@@ -1,18 +1,36 @@
 {
     "configurations": [
         {
-            "name": "Linux", // 根据你的操作系统选择正确的名称，例如 "Win32" 或 "macOS"
+            "name": "Win32",
             "includePath": [
                 "${workspaceFolder}/**",
-                "/usr/local/cuda/include"  // 添加 CUDA 头文件路径
+                "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.9/include",
+                "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/Llvm/x64/lib/clang/19/include",
+                "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207/include"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "compilerPath": "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.9/bin/nvcc.exe",
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "msvc-x64"
+        },
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/usr/local/cuda/include",
+                "/usr/include"
             ],
             "defines": [],
-            "compilerPath": "/usr/local/cuda/bin/nvcc", // 使用cuda编译器
+            "compilerPath": "/usr/local/cuda/bin/nvcc",
             "cStandard": "c11",
-            "cppStandard": "c++11",
-            "intelliSenseMode": "linux-gcc-x64",
-            "configurationProvider": "ms-vscode.makefile-tools"
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-gcc-x64"
         }
     ],
-    "version": 4
+    "version": 4,
 }

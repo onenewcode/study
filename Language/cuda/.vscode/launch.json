@@ -1,19 +1,37 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "(ixgdb) Launch",
-            "type": "cuda-gdb", 
-            "args": [],
-            "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "environment": [],
-            "request": "launch",
-            // ${fileDirname}: 当前打开的文件所在的目录。
-            // ${fileBasenameNoExtension}: 当前打开的文件的基本名称（不包括路径和扩展名）。
-            "program": "${fileDirname}/${fileBasenameNoExtension}",
-            "preLaunchTask": "build: current file",
-            // "postDebugTask": "clean: delete compiled file"
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+
+    {
+  "name": "CUDA Debug (GDB Compatible)",
+  "type": "cuda-gdb",
+  "request": "launch",
+  "program": "${workspaceFolder}/build/linux/x86_64/debug/test",
+  "args": [],
+  "stopAtEntry": false,
+  "cwd": "${workspaceFolder}",
+},
+    {
+      "name": "Windows Debugger (MSVC)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/windows/x64/debug/test.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+    },
+    {
+      "name": "GDB (MinGW-W64)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/${workspaceFolderBasename}.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "MIMode": "gdb",
+      "miDebuggerPath": "C:\\mingw-w64\\bin\\gdb.exe"
+    }
+  ]
 }
