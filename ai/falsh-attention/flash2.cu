@@ -26,15 +26,15 @@ __global__ void forward_kernel2(const half *Q, const half *K, const half *V, con
     for (int j = 0; j < Tc; j++)
     {
         // Load Kj, Vj to SRAM (向量化float4加载，每次8个half)
-        float4 *Kj4 = reinterpret_cast<float4*>(Kj);
-        float4 *Vj4 = reinterpret_cast<float4*>(Vj);
-        const float4 *K4 = reinterpret_cast<const float4*>(K);
-        const float4 *V4 = reinterpret_cast<const float4*>(V);
-        int d4 = d / 8;
-        for (int x = 0; x < d4; x++)
+        half2 *Kj2 = reinterpret_cast<half2*>(Kj);
+        half2 *Vj2 = reinterpret_cast<half2*>(Vj);
+        const half2 *K2 = reinterpret_cast<const half2*>(K);
+        const half2 *V2 = reinterpret_cast<const half2*>(V);
+        int d2 = d / 2;
+        for (int x = 0; x < d2; x++)
         {
-            Kj4[tx * d4 + x] = K4[(qkv_offset + (tile_size * j) + (tx * d) + 8 * x) / 8];
-            Vj4[tx * d4 + x] = V4[(qkv_offset + (tile_size * j) + (tx * d) + 8 * x) / 8];
+            Kj2[tx * d2 + x] = K2[(qkv_offset + (tile_size * j) + (tx * d) + 2 * x) / 2];
+            Vj2[tx * d2 + x] = V2[(qkv_offset + (tile_size * j) + (tx * d) + 2 * x) / 2];
         }
         __syncthreads();
 
