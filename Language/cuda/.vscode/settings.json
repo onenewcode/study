@@ -1,6 +1,7 @@
 {
     "files.associations": {
         "*.js": "javascript",
-        "cstdint": "cpp"
+        "cstdint": "cpp",
+        "vector": "cpp"
     }
 }

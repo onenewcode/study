@@ -1,5 +1,7 @@
 #include <cuda/std/cstdint>
+#include <cuda/std/__complex/vector_support.h>
 #include <math_constants.h>
+
 #include <iostream>
 #include <vector>
 #include <cassert>
@@ -155,7 +157,8 @@ extern "C" __global__ void __attn_f64(
 // CPU reference implementation for masked attention (double precision)
 void cpu_attention_with_mask(const double* q, const double* k, const double* v, const uint8_t* mask, double* out, int n, int d) {
     for (int i = 0; i < n; ++i) {
-        std::vector<double> scores(n, 0.0);
+        double scores[64] = {0.0}; // assuming n <= 64, adjust size as needed
+        for (int idx = 0; idx < n; ++idx) scores[idx] = 0.0;
         double max_score = -1e30;
         for (int j = 0; j < n; ++j) {
             if (!mask[i * n + j]) {
