@@ -201,8 +201,8 @@ int main() {
     for (uint64_t i = 0; i < n * s; ++i) {
         h_mask[i] = (i % n <= i / n);
     }
-    double h_m[n] = {0};
-    double h_l[n] = {-INFINITY};
+    double h_m[n] = {-INFINITY};
+    double h_l[n] = {0};
 
     // 分配 device 内存
     double **d_kv_pages;
