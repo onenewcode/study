@@ -57,7 +57,7 @@ __device__ void __attn(
     T *qi = sram;
     T *kj = &sram[tile_size];
     T *vj = &sram[tile_size * 2];
-    T *x = &sram[tile_size * 3];
+    T *x = new T[bs];
     // kv
     for (uint64_t ikvb = 0; ikvb < ts; ++ikvb) {
         // 加载kv
@@ -100,7 +100,7 @@ __device__ void __attn(
                         T const *k = kj + i * d;
 
                         for (uint64_t j = 0; j < d; ++j) {
-                            x[i] += qi[j] * kj[j];
+                            x[i] += qi[j] * k[j];
                         }
                         x[i] *= scale;
 
@@ -111,7 +111,7 @@ __device__ void __attn(
                 }
                 // P = exp(S - row_m), row_l = rowsum(P)
                 T sum = 0;
-                for (uint64_t i = 0; i < bs; ++i) {
+                for (uint64_t i = 0; i < d; ++i) {
                     x[i] = ::exp(x[i] - mi);
                     sum += x[i];
                 }
