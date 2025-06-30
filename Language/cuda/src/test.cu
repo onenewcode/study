@@ -21,8 +21,12 @@ __device__ kv_cache<T> locate_cache(
     sh *= head;
     sbuf *= pos % bs;
     uint8_t *page = (uint8_t *)pages[pos / bs];
-    return kv_cache<T>((T *)(page + sh + sbuf), (T *)(page + sh + sbuf + skv));
+    return kv_cache{
+        (T *)(page + sh + sbuf),
+        (T *)(page + sh + sbuf + skv),
+    };
 }
+
 
 template <typename T>
 __device__ void __attn(
@@ -162,16 +166,30 @@ extern "C" __global__ void __attn_f64(
     // 调用模板实现
     __attn<double>(kv_pages, q_, o_, mask_, m, l, n, d, ts, bs, sq, so, kv_sbuf, kv_skv, kv_sh, scale);
 }
-void main() {
+// 简化版：原地重排 h_kv，a、b等长，交替取 d 个元素
+void interleave_h_kv_inplace(double* h_kv, size_t len, size_t d) {
+    double* tmp = new double[len];
+    size_t half = len / 2;
+    size_t a_pos = 0, b_pos = 0, out_pos = 0;
+    while (a_pos < half) {
+        for (size_t i = 0; i < d; ++i) tmp[out_pos++] = h_kv[a_pos++];
+        for (size_t i = 0; i < d; ++i) tmp[out_pos++] = h_kv[half + b_pos++];
+    }
+    for (size_t i = 0; i < len; ++i) h_kv[i] = tmp[i];
+    delete[] tmp;
+}
+
+int main() {
     // 测试 __attn_f64 kernel（数据量加倍）
     constexpr uint64_t n = 4, s = 4,d = 4, ts = 2, bs = 2; // n, ts, h_kv等均加倍
-    constexpr int64_t sq = d, so = d, kv_sbuf = d * 2, kv_skv = d, kv_sh = d;
+    constexpr int64_t sq = d, so = d, kv_sbuf = d * 2*8, kv_skv = d*8, kv_sh = d*8;
     float scale = 1.0f / sqrtf((float)d);
 
     // 分配 host 内存
     double h_kv[bs * d * 2 * ts] = {
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
         17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
+    interleave_h_kv_inplace(h_kv, sizeof(h_kv) / sizeof(double), d);
     double *h_kv_pages[ts];
     for (int i = 0; i < ts; ++i) {
         h_kv_pages[i] = h_kv + i * bs * d * 2;

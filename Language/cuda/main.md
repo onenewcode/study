@@ -213,3 +213,7 @@ nsys stats my_trace.qdrep
 # 使用GUI查看
 nsys-ui my_trace.qdrep
 ```
+
+# xmake
+配置debug模式
+>xmake config -m debug
