@@ -162,10 +162,10 @@ extern "C" __global__ void __attn_f64(
     // 调用模板实现
     __attn<double>(kv_pages, q_, o_, mask_, m, l, n, d, ts, bs, sq, so, kv_sbuf, kv_skv, kv_sh, scale);
 }
-int main() {
+void main() {
     // 测试 __attn_f64 kernel（数据量加倍）
     constexpr uint64_t n = 4, s = 4,d = 4, ts = 2, bs = 2; // n, ts, h_kv等均加倍
-    constexpr int64_t sq = d, so = d, kv_sbuf = d * 2, kv_skv = d, kv_sh = 0;
+    constexpr int64_t sq = d, so = d, kv_sbuf = d * 2, kv_skv = d, kv_sh = d;
     float scale = 1.0f / sqrtf((float)d);
 
     // 分配 host 内存
@@ -179,12 +179,12 @@ int main() {
     double h_q[n * d] = {
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
     double h_o[n * d] = {0};
-    bool h_mask[n * s];
+    bool h_mask[n * n];
     for (uint64_t i = 0; i < n * s; ++i) {
-        h_mask[i] = (i % s <= s - n + i / s);
+        h_mask[i] = (i % n <= i / n);
     }
     double h_m[n] = {0};
-    double h_l[n] = {1};
+    double h_l[n] = {-INFINITY};
 
     // 分配 device 内存
     double **d_kv_pages;

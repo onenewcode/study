@@ -1,6 +1,16 @@
 {
   "version": "0.2.0",
   "configurations": [
+
+    {
+  "name": "CUDA Debug (GDB Compatible)",
+   "type": "cuda-gdb",
+  "request": "launch",
+  "program": "${workspaceFolder}/build/windows/x64/debug/test.exe",
+  "args": [],
+  "stopAtEntry": false,
+  "cwd": "${workspaceFolder}",
+},
     {
       "name": "Windows Debugger (MSVC)",
       "type": "cppvsdbg",
