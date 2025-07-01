@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cuda/std/cstdint>
+#include <limits>
 #include <math_constants.h>
 
 template <typename T>
@@ -26,7 +27,6 @@ __device__ kv_cache<T> locate_cache(
         (T *)(page + sh + sbuf + skv),
     };
 }
-
 
 template <typename T>
 __device__ void __attn(
@@ -82,7 +82,7 @@ __device__ void __attn(
                 // locate data 加载q
                 T const *q = q_ + iq * sq;
                 T *o = o_ + iq * so;
-                bool const *mask = mask_ + iq * n + ikvb * bs;
+                bool const *mask = mask_ + iq * bs * ts + ikvb * bs;
                 // load data
                 for (uint64_t i = 0; i < d; ++i) {
                     qi[i] = q[i];
@@ -98,7 +98,8 @@ __device__ void __attn(
                         x[i] = -CUDART_INF_F;
                     } else {
                         T const *k = kj + i * d;
-
+                        // 初始化
+                        x[i] = 0;
                         for (uint64_t j = 0; j < d; ++j) {
                             x[i] += qi[j] * k[j];
                         }
@@ -110,8 +111,8 @@ __device__ void __attn(
                     }
                 }
                 // P = exp(S - row_m), row_l = rowsum(P)
-                T sum = 0;
-                for (uint64_t i = 0; i < d; ++i) {
+                T sum = 0.;
+                for (uint64_t i = 0; i < bs; ++i) {
                     x[i] = ::exp(x[i] - mi);
                     sum += x[i];
                 }
@@ -133,7 +134,7 @@ __device__ void __attn(
                 }
                 for (uint64_t i = 0; i < bs; ++i) {
                     T xi = x[i];
-                    T *vji = &vj[i * d];
+                    T const *v= vj + i * d;
                     for (uint64_t j = 0; j < d; ++j) {
                         xv[j] += xi * vji[j];
                     }
@@ -163,45 +164,140 @@ extern "C" __global__ void __attn_f64(
     int64_t const kv_skv,
     int64_t const kv_sh,
     float const scale) {
+    // 打印所有参数
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("kv_pages: %p\n", kv_pages);
+        for (uint64_t i = 0; i < ts; ++i) {
+            printf("  kv_pages[%lu]: %p\n", i, kv_pages[i]);
+            double *page = kv_pages[i];
+            for (uint64_t j = 0; j < bs * d * 2; ++j) {
+                printf("    kv_pages[%lu][%lu]=%f\n", i, j, page[j]);
+            }
+        }
+        printf("q_: %p\n", q_);
+        for (uint64_t i = 0; i < n * d; ++i) {
+            printf("  q_[%lu]=%f\n", i, q_[i]);
+        }
+        printf("o_: %p\n", o_);
+        for (uint64_t i = 0; i < n * d; ++i) {
+            printf("  o_[%lu]=%f\n", i, o_[i]);
+        }
+        printf("mask_: %p\n", (void *)mask_);
+        for (uint64_t i = 0; i < n * n; ++i) {
+            printf("  mask_[%lu] = %s\n", i, mask_[i] ? "true" : "false");
+        }
+        printf("m: %p\n", m);
+        for (uint64_t i = 0; i < n; ++i) {
+            printf("  m[%lu]=%f\n", i, m[i]);
+        }
+        printf("l: %p\n", l);
+        for (uint64_t i = 0; i < n; ++i) {
+            printf("  l[%lu]=%f\n", i, l[i]);
+        }
+        printf("n: %lu\n", n);
+        printf("d: %lu\n", d);
+        printf("ts: %lu\n", ts);
+        printf("bs: %lu\n", bs);
+        printf("sq: %ld\n", sq);
+        printf("so: %ld\n", so);
+        printf("kv_sbuf: %ld\n", kv_sbuf);
+        printf("kv_skv: %ld\n", kv_skv);
+        printf("kv_sh: %ld\n", kv_sh);
+        printf("scale: %f\n", scale);
+    }
     // 调用模板实现
     __attn<double>(kv_pages, q_, o_, mask_, m, l, n, d, ts, bs, sq, so, kv_sbuf, kv_skv, kv_sh, scale);
 }
 // 简化版：原地重排 h_kv，a、b等长，交替取 d 个元素
-void interleave_h_kv_inplace(double* h_kv, size_t len, size_t d) {
-    double* tmp = new double[len];
+void interleave_h_kv_inplace(double *h_kv, size_t len, size_t d) {
+    double *tmp = new double[len];
     size_t half = len / 2;
     size_t a_pos = 0, b_pos = 0, out_pos = 0;
     while (a_pos < half) {
-        for (size_t i = 0; i < d; ++i) tmp[out_pos++] = h_kv[a_pos++];
-        for (size_t i = 0; i < d; ++i) tmp[out_pos++] = h_kv[half + b_pos++];
+        for (size_t i = 0; i < d; ++i) {
+            tmp[out_pos++] = h_kv[a_pos++];
+        }
+        for (size_t i = 0; i < d; ++i) {
+            tmp[out_pos++] = h_kv[half + b_pos++];
+        }
     }
-    for (size_t i = 0; i < len; ++i) h_kv[i] = tmp[i];
+    for (size_t i = 0; i < len; ++i) {
+        h_kv[i] = tmp[i];
+    }
     delete[] tmp;
 }
 
 int main() {
     // 测试 __attn_f64 kernel（数据量加倍）
-    constexpr uint64_t n = 4, s = 4,d = 4, ts = 2, bs = 2; // n, ts, h_kv等均加倍
-    constexpr int64_t sq = d, so = d, kv_sbuf = d * 2*8, kv_skv = d*8, kv_sh = d*8;
+    constexpr uint64_t n = 4, s = 4, d = 4, ts = 2, bs = 2; // n, ts, h_kv等均加倍
+    constexpr int64_t sq = d, so = d, kv_sbuf = d * 2 * 8, kv_skv = d * 8, kv_sh = d * 8;
     float scale = 1.0f / sqrtf((float)d);
 
     // 分配 host 内存
     double h_kv[bs * d * 2 * ts] = {
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-        17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
+        0.5,
+        2.3,
+        -3.8,
+        4.1,
+        5.6,
+        -6.9,
+        7.2,
+        8.0,
+        9.4,
+        -10.3,
+        11.7,
+        12.1,
+        -13.5,
+        14.8,
+        15.9,
+        -16.0,
+        17.2,
+        18.9,
+        -19.5,
+        20.3,
+        21.0,
+        -22.7,
+        23.4,
+        24.1,
+        25.8,
+        -26.6,
+        27.3,
+        28.9,
+        -29.2,
+        30.7,
+        31.5,
+        -32.0,
+    };
     interleave_h_kv_inplace(h_kv, sizeof(h_kv) / sizeof(double), d);
     double *h_kv_pages[ts];
     for (int i = 0; i < ts; ++i) {
         h_kv_pages[i] = h_kv + i * bs * d * 2;
     }
     double h_q[n * d] = {
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+        1.3,
+        -2.7,
+        3.1,
+        4.9,
+        -5.5,
+        6.2,
+        -7.0,
+        8.4,
+        9.8,
+        10.1,
+        -11.3,
+        12.6,
+        13.9,
+        -14.2,
+        15.0,
+        16.7,
+    };
     double h_o[n * d] = {0};
     bool h_mask[n * n];
     for (uint64_t i = 0; i < n * s; ++i) {
         h_mask[i] = (i % n <= i / n);
     }
-    double h_m[n] = {-INFINITY};
+    double h_m[n];
+    std::fill(h_m, h_m + n, std::numeric_limits<double>::lowest());
     double h_l[n] = {0};
 
     // 分配 device 内存
@@ -238,7 +334,7 @@ int main() {
     cudaMemcpy(h_o, d_o, sizeof(h_o), cudaMemcpyDeviceToHost);
     printf("output:\n");
     for (int i = 0; i < n * d; ++i) {
-        printf("%f ", h_o[i]);
+        printf("%lf ", h_o[i]);
     }
     printf("\n");
 

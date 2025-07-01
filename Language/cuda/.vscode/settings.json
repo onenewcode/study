@@ -4,7 +4,13 @@
         "cstdint": "cpp",
         "vector": "cpp",
         "cmath": "cpp",
-        "cstdlib": "cpp"
+        "cstdlib": "cpp",
+        "atomic": "cpp",
+        "chrono": "cpp",
+        "compare": "cpp",
+        "random": "cpp",
+        "format": "cpp",
+        "algorithm": "cpp"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }
