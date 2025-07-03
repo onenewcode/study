@@ -47,6 +47,7 @@ __device__ void __attn(
     float const scale) {
     // (batch x head) x (bn)
     uint64_t const head = blockIdx.x;
+    uint64_t const nh=gridDim.x;
     uint64_t const bn = blockDim.x;
     uint64_t const it = threadIdx.x;
     uint64_t const tn = (n + bn - 1) / bn;
@@ -54,7 +55,8 @@ __device__ void __attn(
     extern __shared__ T sram[];
     T *kj = sram;
     T *vj = sram + bs * d;
-
+    const T *q = q_ + head*nh*sq;
+    T *_o=o_+head*nh*so;
     for (uint64_t iqb = 0; iqb < tn; ++iqb) {
         uint64_t iq = iqb * bn + it;
         if (iq >= n) {
@@ -63,7 +65,7 @@ __device__ void __attn(
 
         T mi = m[iq];
         T li = l[iq];
-        T *o = o_ + iq * so;
+        T *o = _o + iq * so;
 
         for (uint64_t ikvb = 0; ikvb < ts; ++ikvb) {
             // Load kv block to shared memory
@@ -80,15 +82,15 @@ __device__ void __attn(
             }
 
             // Load q_i and mask
-            T qi_val[128]; // Assume d <= 128
+            T* qi_val= new T[d];  // Assume d <= 128
             bool const *mask = mask_ + iq * bs * ts + ikvb * bs;
 
             for (uint64_t j = 0; j < d; ++j) {
-                qi_val[j] = q_[iq * sq + j];
+                qi_val[j] = q[iq * sq + j];
             }
 
             // Compute scores
-            T scores[128]; // Assume bs <= 128
+             T* scores = new T[d]; /// Assume bs <= 128
             T mi_local = -CUDART_INF_F;
             for (uint64_t i = 0; i < bs; ++i) {
                 if (!mask[i]) {
