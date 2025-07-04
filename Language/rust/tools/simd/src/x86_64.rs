@@ -1,6 +1,6 @@
 use consts::{GGML_F16_ARR, GGML_F16_EPR, GGML_F16_STEP, GGML_F32_ARR};
 use core::f32;
-use half::f16;
+
 use std::arch::x86_64::*;
 
 use crate::BlockQ8_0;
@@ -99,5 +99,101 @@ pub unsafe fn bytes_from_nibbles_32(rsi: *const u8) -> __m256i {
     _mm256_and_si256(low_mask, bytes)
 }
 
-// #define GGML_F32Cx16_LOAD(x)     _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)(x)))
-// #define GGML_F32Cx16_STORE(x, y) _mm256_storeu_si256((__m256i *)(x), _mm512_cvtps_ph(y, 0))
+#[cfg(all(target_arch = "x86_64"))]
+// #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+pub fn vec_dot_q8_0_q8_0_avx2(abs: &[BlockQ8_0], bbs: &[BlockQ8_0]) -> f32 {
+    use std::arch::x86_64::*;
+
+    use crate::x86_64::*;
+
+    debug_assert_eq!(abs.len(), bbs.len());
+
+    unsafe {
+        let mut acc0 = _mm256_setzero_ps();
+        let mut acc1 = _mm256_setzero_ps();
+
+        for [(abs0, bbs0), (abs1, bbs1)] in abs.iter().zip(bbs).array_chunks::<2>() {
+            let d0 = _mm256_set1_ps(abs0.d as f32  * bbs0.d as f32 );
+            let d1 = _mm256_set1_ps(abs1.d as f32  * bbs1.d as f32 );
+
+            let qa0 = _mm256_loadu_si256(abs0.qs.as_ptr() as *const __m256i);
+            let qb0 = _mm256_loadu_si256(bbs0.qs.as_ptr() as *const __m256i);
+
+            let qa1 = _mm256_loadu_si256(abs1.qs.as_ptr() as *const __m256i);
+            let qb1 = _mm256_loadu_si256(bbs1.qs.as_ptr() as *const __m256i);
+
+            let q0 = mul_sum_i8_pairs_float(qa0, qb0);
+            let q1 = mul_sum_i8_pairs_float(qa1, qb1);
+
+            acc0 = _mm256_fmadd_ps(d0, q0, acc0);
+            acc1 = _mm256_fmadd_ps(d1, q1, acc1);
+        }
+
+        if abs.len() % 2 == 1 {
+            let a = abs.last().unwrap_unchecked();
+            let b = bbs.last().unwrap_unchecked();
+
+            let d = _mm256_set1_ps(a.d as f32  * b.d as f32 );
+
+            let qa = _mm256_loadu_si256(a.qs.as_ptr() as *const __m256i);
+            let qb = _mm256_loadu_si256(b.qs.as_ptr() as *const __m256i);
+
+            let q = mul_sum_i8_pairs_float(qa, qb);
+
+            acc0 = _mm256_fmadd_ps(d, q, acc0);
+        }
+
+        hsum_float_8(_mm256_add_ps(acc0, acc1))
+    }
+}
+pub fn vec_dot_q8(x: &[BlockQ8_0], y: &[BlockQ8_0]) -> f32 {
+    unsafe {
+        use std::arch::x86_64::*;
+        // Initialize accumulator with zeros
+        let mut acc = _mm256_setzero_ps();
+        // Main loop
+        (0..x.len()).into_iter().for_each(|i| {
+            //  转换成查表，提升不明显
+            let d = _mm256_set1_ps(x[i].d as f32  * (y[i].d as f32 ));
+            let qx = _mm256_loadu_si256(x[i].qs.as_ptr() as *const __m256i);
+            let qy = _mm256_loadu_si256(y[i].qs.as_ptr() as *const __m256i);
+            let q = crate::x86_64::mul_sum_i8_pairs_float(qx, qy);
+
+            // TODO 过慢 cpu Intel(R) Xeon(R) Gold 6330 CPU @ 2.00GHz rust 1.86.0-nightly
+            // // Multiply q with scale and accumulate
+            acc = _mm256_fmadd_ps(d, q, acc);
+        });
+        crate::x86_64::hsum_float_8(acc)
+    }
+}
+pub fn vec_dot_f16(x: &[f16], y: &[f16]) -> f32 {
+    unsafe {
+        use std::arch::x86_64::*;
+        let mut sumf: f32 = 0.0;
+        let n = x.len();
+
+        let np = n & !(GGML_F16_STEP - 1);
+
+        let mut sum: [__m512; GGML_F16_ARR] = [_mm512_setzero_ps(); GGML_F16_ARR];
+        let mut ax: [__m512; GGML_F16_ARR] = [_mm512_setzero_ps(); GGML_F16_ARR];
+        let mut ay: [__m512; GGML_F16_ARR] = [_mm512_setzero_ps(); GGML_F16_ARR];
+
+        for i in (0..np).step_by(GGML_F16_STEP) {
+            for j in 0..GGML_F16_ARR {
+                let idx = i + j * GGML_F16_EPR;
+
+                ax[j] = ggml_f32_cx16_load(x.as_ptr().add(idx) as *const u8);
+                ay[j] = ggml_f32_cx16_load(y.as_ptr().add(idx) as *const u8);
+
+                sum[j] = _mm512_fmadd_ps(ax[j], ay[j], sum[j]);
+            }
+        }
+
+        ggml_f32x16_reduce(sumf, &mut sum);
+        // 处理不能除尽的元素
+        (np..n).into_iter().for_each(|i| {
+            sumf += x[i] as f32  * y[i] as f32 ;
+        });
+        sumf
+    }
+}

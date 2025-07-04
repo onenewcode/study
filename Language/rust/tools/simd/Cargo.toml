@@ -4,5 +4,3 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-half = "2.6.0"
-rand = "0.9.1"
