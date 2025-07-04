@@ -207,20 +207,23 @@ pub fn vec_dot_f16(x: &[f16], y: &[f16]) -> f32 {
 }
 #[cfg(test)]
 mod tests {
+    use crate::gen_rand_block_q8_0_vec;
 
-    // #[bench]
-    // fn bench_vec_dot_q8_ggml(b: &mut Bencher) {
-    //     let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-    //     let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-    //     b.iter(|| vec_dot_q8_ggml(TEST_ELEMS, &v1, &v2));
-    // }
+    extern crate test;
 
-    // #[bench]
-    // fn bench_vec_dot_q8_naive(b: &mut Bencher) {
-    //     let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-    //     let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-    //     b.iter(|| vec_dot_q8_naive(TEST_ELEMS, &v1, &v2));
-    // }
+    use test::Bencher;
+
+    const TEST_BLOCKS: usize = 1000;
+    const TEST_ELEMS: usize = TEST_BLOCKS * 32;
+
+
+
+    #[bench]
+    fn bench_vec_dot_q8_naive(b: &mut Bencher) {
+        let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+        let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+        b.iter(|| vec_dot_q8(TEST_ELEMS, &v1, &v2));
+    }
 
     // #[bench]
     // fn bench_vec_dot_q8_stdsimd(b: &mut Bencher) {

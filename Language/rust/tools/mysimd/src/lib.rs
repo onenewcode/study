@@ -74,10 +74,6 @@ mod tests {
     use super::*;
     use rand::Rng;
     extern crate test;
-    use test::Bencher;
-
-    const TEST_BLOCKS: usize = 1000;
-    const TEST_ELEMS: usize = TEST_BLOCKS * 32;
 
     #[test]
     fn test_vec_dot_q8() {
