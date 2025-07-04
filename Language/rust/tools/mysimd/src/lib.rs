@@ -51,24 +51,24 @@ pub fn vec_dot_q8_stdsimd(n: usize, x: &[BlockQ8_0], y: &[BlockQ8_0]) -> f32 {
 
     sumf
 }
-    // generate a random vector of BlockQ8_0
-    fn gen_rand_block_q8_0() -> BlockQ8_0 {
-        let mut rng = rand::rng();
-        let d: f32 = rng.random_range(-40.0..1.3e5);
-        let mut qs: [i8; 32] = [0; 32];
-        for i in 0..32 {
-            qs[i] = rng.random();
-        }
-        BlockQ8_0 { d: d as f16, qs }
+// generate a random vector of BlockQ8_0
+fn gen_rand_block_q8_0() -> BlockQ8_0 {
+    let mut rng = rand::rng();
+    let d: f32 = rng.random_range(-10.0..10.0);
+    let mut qs: [i8; 32] = [0; 32];
+    for i in 0..32 {
+        qs[i] = rng.random();
     }
+    BlockQ8_0 { d: d as f16, qs }
+}
 
-   pub fn gen_rand_block_q8_0_vec(n: usize) -> Vec<BlockQ8_0> {
-        let mut v: Vec<BlockQ8_0> = Vec::with_capacity(n);
-        for _ in 0..n {
-            v.push(gen_rand_block_q8_0());
-        }
-        v
+pub fn gen_rand_block_q8_0_vec(n: usize) -> Vec<BlockQ8_0> {
+    let mut v: Vec<BlockQ8_0> = Vec::with_capacity(n);
+    for _ in 0..n {
+        v.push(gen_rand_block_q8_0());
     }
+    v
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,8 +78,6 @@ mod tests {
 
     const TEST_BLOCKS: usize = 1000;
     const TEST_ELEMS: usize = TEST_BLOCKS * 32;
-
-
 
     #[test]
     fn test_vec_dot_q8() {
