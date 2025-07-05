@@ -1,262 +1,242 @@
-use consts::{GGML_F16_ARR, GGML_F16_EPR, GGML_F16_STEP, GGML_F32_ARR};
-use core::f32;
+use std::arch::x86_64::{__m128, __m128i};
 
-use std::arch::x86_64::*;
-
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::BlockQ8_0;
 
-// 当目标支持 AVX2 时设置这些常量
-// #[cfg(target_feature = "avx512f")]
-pub mod consts {
-    pub const GGML_F16_STEP: usize = 64;
-    pub const GGML_F16_EPR: usize = 16;
-    pub const GGML_F32_STEP: usize = 64;
-    pub const GGML_F32_EPR: usize = 16;
-    pub const GGML_F32_ARR: usize = GGML_F32_STEP / GGML_F32_EPR;
-    pub const GGML_F16_ARR: usize = GGML_F16_STEP / GGML_F16_EPR;
-}
-
-/// TODO: Adding AVX-VNNI support so that we can use `_mm256_dpbssd_epi32`
-#[inline]
-pub unsafe fn mul_sum_i8_pairs_float(x: __m256i, y: __m256i) -> __m256 {
-    unsafe {
-        // Get absolute values of x vectors
-        let ax = _mm256_sign_epi8(x, x);
-        // Sign the values of the y vectors
-        let sy = _mm256_sign_epi8(y, x);
-        mul_sum_us8_pairs_float(ax, sy)
-    }
-}
-
-#[inline]
-pub unsafe fn mul_sum_us8_pairs_float(ax: __m256i, sy: __m256i) -> __m256 {
-    unsafe {
-        if is_x86_feature_detected!("avx512vl") || is_x86_feature_detected!("avxvnni") {
-            let zero = _mm256_setzero_si256();
-            let summed_pairs = _mm256_dpbusd_epi32(zero, ax, sy);
-            _mm256_cvtepi32_ps(summed_pairs)
-        } else {
-            // avx
-            let axl = _mm256_castsi256_si128(ax);
-            let axh = _mm256_extractf128_si256(ax, 1);
-            let syl = _mm256_castsi256_si128(sy);
-            let syh = _mm256_extractf128_si256(sy, 1);
-            // Perform multiplication and create 16-bit values
-            let dotl = _mm_maddubs_epi16(axl, syl);
-            let doth = _mm_maddubs_epi16(axh, syh);
-            sum_i16_pairs_float(doth, dotl)
-        }
-    }
-}
-
-#[inline]
-pub unsafe fn sum_i16_pairs_float(xh: __m128i, xl: __m128i) -> __m256 {
-    unsafe {
-        let ones = _mm_set1_epi16(1);
-        let summed_pairsl = _mm_madd_epi16(ones, xl);
-        let summed_pairsh = _mm_madd_epi16(ones, xh);
-        let summed_pairs = _mm256_set_m128i(summed_pairsh, summed_pairsl);
-        _mm256_cvtepi32_ps(summed_pairs)
-    }
-}
-
-/// horizontally add 8 floats
-#[inline]
-pub unsafe fn hsum_float_8(x: __m256) -> f32 {
-    unsafe {
-        let res = _mm256_extractf128_ps(x, 1);
-        let res = _mm_add_ps(res, _mm256_castps256_ps128(x));
-        let res = _mm_add_ps(res, _mm_movehl_ps(res, res));
-        let res = _mm_add_ss(res, _mm_movehdup_ps(res));
-        _mm_cvtss_f32(res)
-    }
-}
-#[target_feature(enable = "avx512f")]
-pub unsafe fn ggml_f32x16_reduce(mut res: f32, x: &mut [__m512; GGML_F32_ARR]) {
-    let mut offset = GGML_F32_ARR >> 1;
-    // 第一轮归约
-    for i in 0..offset {
-        x[i] = _mm512_add_ps(x[i], x[offset + i]);
-    }
-
-    offset >>= 1;
-
-    // 后续归约步骤
-    while offset > 0 {
-        for i in 0..offset {
-            x[i] = _mm512_add_ps(x[i], x[offset + i]);
-        }
-        offset >>= 1;
-    }
-
-    // 最终归约
-    res += _mm512_reduce_add_ps(x[0]);
-}
-#[inline]
-pub unsafe fn ggml_f32_cx16_load(x: *const u8) -> __m512 {
-    unsafe { _mm512_cvtph_ps(_mm256_loadu_si256(x as *const __m256i)) }
-}
-
-// Unpack 32 4-bit fields into 32 bytes
-// The output vector contains 32 bytes, each one in [ 0 .. 15 ] interval
-#[inline]
-pub unsafe fn bytes_from_nibbles_32(rsi: *const u8) -> __m256i {
-    unsafe {
-        let tmp = _mm_loadu_si128(rsi as *const _);
-        let bytes = _mm256_set_m128i(_mm_srli_epi16(tmp, 4), tmp);
-        let low_mask = _mm256_set1_epi8(0xF);
-        _mm256_and_si256(low_mask, bytes)
-    }
-}
-
-#[cfg(all(target_arch = "x86_64"))]
-// #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-pub fn vec_dot_q8_0_q8_0_avx2(abs: &[BlockQ8_0], bbs: &[BlockQ8_0]) -> f32 {
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+#[target_feature(enable = "fma")]
+pub unsafe fn vec_dot_q8_avx2(n: usize, a: &[BlockQ8_0], b: &[BlockQ8_0]) -> f32 {
     use std::arch::x86_64::*;
 
-    debug_assert_eq!(abs.len(), bbs.len());
+    let mut sumv = _mm256_setzero_ps();
+    let zero = _mm256_setzero_si256();
 
-    unsafe {
-        let mut acc0 = _mm256_setzero_ps();
-        let mut acc1 = _mm256_setzero_ps();
+    for i in 0..n / 32 {
+        let ab = a.get_unchecked(i);
+        let bb = b.get_unchecked(i);
 
-        for [(abs0, bbs0), (abs1, bbs1)] in abs.iter().zip(bbs).array_chunks::<2>() {
-            let d0 = _mm256_set1_ps(abs0.d as f32 * bbs0.d as f32);
-            let d1 = _mm256_set1_ps(abs1.d as f32 * bbs1.d as f32);
+        // 加载32个int8值
+        let a_vec = _mm256_loadu_si256(ab.qs.as_ptr() as *const __m256i);
+        let b_vec = _mm256_loadu_si256(bb.qs.as_ptr() as *const __m256i);
 
-            let qa0 = _mm256_loadu_si256(abs0.qs.as_ptr() as *const __m256i);
-            let qb0 = _mm256_loadu_si256(bbs0.qs.as_ptr() as *const __m256i);
+        // 扩展int8到int16（有符号）
+        let a_low = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(a_vec, 0));
+        let a_high = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(a_vec, 1));
+        let b_low = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b_vec, 0));
+        let b_high = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b_vec, 1));
 
-            let qa1 = _mm256_loadu_si256(abs1.qs.as_ptr() as *const __m256i);
-            let qb1 = _mm256_loadu_si256(bbs1.qs.as_ptr() as *const __m256i);
+        // 计算点积（乘加）
+        let prod_low = _mm256_madd_epi16(a_low, b_low);
+        let prod_high = _mm256_madd_epi16(a_high, b_high);
 
-            let q0 = mul_sum_i8_pairs_float(qa0, qb0);
-            let q1 = mul_sum_i8_pairs_float(qa1, qb1);
+        // 合并结果
+        let sum_i32 = _mm256_add_epi32(prod_low, prod_high);
 
-            acc0 = _mm256_fmadd_ps(d0, q0, acc0);
-            acc1 = _mm256_fmadd_ps(d1, q1, acc1);
-        }
+        // 转换为浮点数
+        let sum_f32 = _mm256_cvtepi32_ps(sum_i32);
 
-        if abs.len() % 2 == 1 {
-            let a = abs.last().unwrap_unchecked();
-            let b = bbs.last().unwrap_unchecked();
-
-            let d = _mm256_set1_ps(a.d as f32 * b.d as f32);
-
-            let qa = _mm256_loadu_si256(a.qs.as_ptr() as *const __m256i);
-            let qb = _mm256_loadu_si256(b.qs.as_ptr() as *const __m256i);
-
-            let q = mul_sum_i8_pairs_float(qa, qb);
-
-            acc0 = _mm256_fmadd_ps(d, q, acc0);
-        }
-
-        hsum_float_8(_mm256_add_ps(acc0, acc1))
+        // 应用缩放因子
+        let scale = ab.d as f32 * bb.d as f32 ;
+        let scale_vec = _mm256_set1_ps(scale);
+        sumv = _mm256_fmadd_ps(sum_f32, scale_vec, sumv);
     }
+
+    // 水平求和
+    let sum_high = _mm256_extractf128_ps(sumv, 1);
+    let sum_low = _mm256_castps256_ps128(sumv);
+    let sum = _mm_add_ps(sum_high, sum_low);
+    let sum = _mm_hadd_ps(sum, sum);
+    let sum = _mm_hadd_ps(sum, sum);
+    _mm_cvtss_f32(sum)
 }
-pub fn vec_dot_q8(x: &[BlockQ8_0], y: &[BlockQ8_0]) -> f32 {
-    unsafe {
-        use std::arch::x86_64::*;
-        // Initialize accumulator with zeros
-        let mut acc = _mm256_setzero_ps();
-        // Main loop
-        (0..x.len()).into_iter().for_each(|i| {
-            //  转换成查表，提升不明显
-            let d = _mm256_set1_ps(x[i].d as f32 * (y[i].d as f32));
-            let qx = _mm256_loadu_si256(x[i].qs.as_ptr() as *const __m256i);
-            let qy = _mm256_loadu_si256(y[i].qs.as_ptr() as *const __m256i);
-            let q = mul_sum_i8_pairs_float(qx, qy);
 
-            // TODO 过慢 cpu Intel(R) Xeon(R) Gold 6330 CPU @ 2.00GHz rust 1.86.0-nightly
-            // // Multiply q with scale and accumulate
-            acc = _mm256_fmadd_ps(d, q, acc);
-        });
-        hsum_float_8(acc)
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+#[target_feature(enable = "fma")]
+pub unsafe fn vec_dot_q8_avx2_unrolled(n: usize, a: &[BlockQ8_0], b: &[BlockQ8_0]) -> f32 {
+    use std::arch::x86_64::*;
+
+    let mut sumv0 = _mm256_setzero_ps();
+    let mut sumv1 = _mm256_setzero_ps();
+    let zero = _mm256_setzero_si256();
+
+    for i in (0..n / 32).step_by(2) {
+        let ab0 = a.get_unchecked(i);
+        let ab1 = a.get_unchecked(i + 1);
+        let bb0 = b.get_unchecked(i);
+        let bb1 = b.get_unchecked(i + 1);
+
+        // 处理第一个块
+        let a_vec0 = _mm256_loadu_si256(ab0.qs.as_ptr() as *const __m256i);
+        let b_vec0 = _mm256_loadu_si256(bb0.qs.as_ptr() as *const __m256i);
+        let a_low0 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(a_vec0, 0));
+        let a_high0 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(a_vec0, 1));
+        let b_low0 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b_vec0, 0));
+        let b_high0 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b_vec0, 1));
+        let prod_low0 = _mm256_madd_epi16(a_low0, b_low0);
+        let prod_high0 = _mm256_madd_epi16(a_high0, b_high0);
+        let sum_i320 = _mm256_add_epi32(prod_low0, prod_high0);
+        let sum_f320 = _mm256_cvtepi32_ps(sum_i320);
+        let scale0 = ab0.d as f32  * bb0.d as f32 ;
+        let scale_vec0 = _mm256_set1_ps(scale0);
+        sumv0 = _mm256_fmadd_ps(sum_f320, scale_vec0, sumv0);
+
+        // 处理第二个块
+        let a_vec1 = _mm256_loadu_si256(ab1.qs.as_ptr() as *const __m256i);
+        let b_vec1 = _mm256_loadu_si256(bb1.qs.as_ptr() as *const __m256i);
+        let a_low1 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(a_vec1, 0));
+        let a_high1 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(a_vec1, 1));
+        let b_low1 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b_vec1, 0));
+        let b_high1 = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b_vec1, 1));
+        let prod_low1 = _mm256_madd_epi16(a_low1, b_low1);
+        let prod_high1 = _mm256_madd_epi16(a_high1, b_high1);
+        let sum_i321 = _mm256_add_epi32(prod_low1, prod_high1);
+        let sum_f321 = _mm256_cvtepi32_ps(sum_i321);
+        let scale1 = ab1.d as f32  * bb1.d as f32 ;
+        let scale_vec1 = _mm256_set1_ps(scale1);
+        sumv1 = _mm256_fmadd_ps(sum_f321, scale_vec1, sumv1);
     }
+
+    // 合并结果
+    let sumv = _mm256_add_ps(sumv0, sumv1);
+    let sum_high = _mm256_extractf128_ps(sumv, 1);
+    let sum_low = _mm256_castps256_ps128(sumv);
+    let sum = _mm_add_ps(sum_high, sum_low);
+    let sum = _mm_hadd_ps(sum, sum);
+    let sum = _mm_hadd_ps(sum, sum);
+    _mm_cvtss_f32(sum)
 }
-pub fn vec_dot_f16(x: &[f16], y: &[f16]) -> f32 {
-    unsafe {
-        use std::arch::x86_64::*;
-        let mut sumf: f32 = 0.0;
-        let n = x.len();
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "sse4.1")]
+#[target_feature(enable = "fma")]
+pub unsafe fn vec_dot_q8_avx(blocks: usize, a: &[BlockQ8_0], b: &[BlockQ8_0]) -> f32 {
+    use std::arch::x86_64::*;
 
-        let np = n & !(GGML_F16_STEP - 1);
+    let mut sumv = _mm_setzero_ps();
+    let mut sum_acc = _mm_setzero_ps();
 
-        let mut sum: [__m512; GGML_F16_ARR] = [_mm512_setzero_ps(); GGML_F16_ARR];
-        let mut ax: [__m512; GGML_F16_ARR] = [_mm512_setzero_ps(); GGML_F16_ARR];
-        let mut ay: [__m512; GGML_F16_ARR] = [_mm512_setzero_ps(); GGML_F16_ARR];
+    for i in 0..n  {
+        let ab = a.get_unchecked(i);
+        let bb = b.get_unchecked(i);
 
-        for i in (0..np).step_by(GGML_F16_STEP) {
-            for j in 0..GGML_F16_ARR {
-                let idx = i + j * GGML_F16_EPR;
+        // 加载16个int8值（第一部分）
+        let a_vec0 = _mm_loadu_si128(ab.qs.as_ptr() as *const __m128i);
+        let b_vec0 = _mm_loadu_si128(bb.qs.as_ptr() as *const __m128i);
 
-                ax[j] = ggml_f32_cx16_load(x.as_ptr().add(idx) as *const u8);
-                ay[j] = ggml_f32_cx16_load(y.as_ptr().add(idx) as *const u8);
+        // 加载16个int8值（第二部分）
+        let a_vec1 = _mm_loadu_si128(ab.qs.as_ptr().add(16) as *const __m128i);
+        let b_vec1 = _mm_loadu_si128(bb.qs.as_ptr().add(16) as *const __m128i);
 
-                sum[j] = _mm512_fmadd_ps(ax[j], ay[j], sum[j]);
-            }
-        }
+        // 计算第一部分点积
+        let dot0 = dot_product_sse(a_vec0, b_vec0);
 
-        ggml_f32x16_reduce(sumf, &mut sum);
-        // 处理不能除尽的元素
-        (np..n).into_iter().for_each(|i| {
-            sumf += x[i] as f32 * y[i] as f32;
-        });
-        sumf
+        // 计算第二部分点积
+        let dot1 = dot_product_sse(a_vec1, b_vec1);
+
+        // 合并点积结果
+        let dot_sum = _mm_add_epi32(dot0, dot1);
+
+        // 转换为浮点数
+        let dot_f32 = _mm_cvtepi32_ps(dot_sum);
+
+        // 应用缩放因子
+        let scale = ab.d as f32 * bb.d as f32;
+        let scale_vec = _mm_set1_ps(scale);
+
+        // 乘积累加
+        sumv = _mm_fmadd_ps(dot_f32, scale_vec, sumv);
     }
+
+    // 水平求和
+    horizontal_sum_sse(sumv)
 }
-#[cfg(test)]
-mod tests {
-    use crate::gen_rand_block_q8_0_vec;
 
-    extern crate test;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "sse4.1")]
 
-    use test::Bencher;
+pub unsafe fn vec_dot_q8_avx_unrolled(n: usize, a: &[BlockQ8_0], b: &[BlockQ8_0]) -> f32 {
+    use std::arch::x86_64::*;
 
-    const TEST_BLOCKS: usize = 1000;
-    const TEST_ELEMS: usize = TEST_BLOCKS * 32;
+    let mut sumv0 = _mm_setzero_ps();
+    let mut sumv1 = _mm_setzero_ps();
 
+    for i in (0..n).step_by(2) {
+        let ab0 = a.get_unchecked(i);
+        let ab1 = a.get_unchecked(i + 1);
+        let bb0 = b.get_unchecked(i);
+        let bb1 = b.get_unchecked(i + 1);
 
+        // 处理第一个块（第一部分）
+        let a00 = _mm_loadu_si128(ab0.qs.as_ptr() as *const __m128i);
+        let b00 = _mm_loadu_si128(bb0.qs.as_ptr() as *const __m128i);
+        let a01 = _mm_loadu_si128(ab0.qs.as_ptr().add(16) as *const __m128i);
+        let b01 = _mm_loadu_si128(bb0.qs.as_ptr().add(16) as *const __m128i);
 
-    #[bench]
-    fn bench_vec_dot_q8_naive(b: &mut Bencher) {
-        let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-        let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-        b.iter(|| vec_dot_q8(TEST_ELEMS, &v1, &v2));
+        // 处理第二个块（第一部分）
+        let a10 = _mm_loadu_si128(ab1.qs.as_ptr() as *const __m128i);
+        let b10 = _mm_loadu_si128(bb1.qs.as_ptr() as *const __m128i);
+        let a11 = _mm_loadu_si128(ab1.qs.as_ptr().add(16) as *const __m128i);
+        let b11 = _mm_loadu_si128(bb1.qs.as_ptr().add(16) as *const __m128i);
+
+        // 计算点积
+        let dot00 = dot_product_sse(a00, b00);
+        let dot01 = dot_product_sse(a01, b01);
+        let dot0 = _mm_add_epi32(dot00, dot01);
+
+        let dot10 = dot_product_sse(a10, b10);
+        let dot11 = dot_product_sse(a11, b11);
+        let dot1 = _mm_add_epi32(dot10, dot11);
+
+        // 应用缩放因子并累加
+        let scale0 = ab0.d as f32 * bb0.d as f32;
+        let scale1 = ab1.d as f32* bb1.d as f32;
+
+        let dot0_f32 = _mm_cvtepi32_ps(dot0);
+        let dot1_f32 = _mm_cvtepi32_ps(dot1);
+
+        sumv0 = _mm_fmadd_ps(dot0_f32, _mm_set1_ps(scale0), sumv0);
+        sumv1 = _mm_fmadd_ps(dot1_f32, _mm_set1_ps(scale1), sumv1);
     }
 
-    // #[bench]
-    // fn bench_vec_dot_q8_stdsimd(b: &mut Bencher) {
-    //     let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-    //     let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-    //     b.iter(|| vec_dot_q8_stdsimd(TEST_ELEMS, &v1, &v2));
-    // }
+    // 合并结果
+    let sumv = _mm_add_ps(sumv0, sumv1);
+    horizontal_sum_sse(sumv)
+}
 
-    // #[bench]
-    // fn bench_vec_dot_q8_neon(b: &mut Bencher) {
-    //     let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-    //     let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-    //     b.iter(|| vec_dot_q8_neon(TEST_ELEMS, &v1, &v2));
-    // }
+// SSE点积辅助函数
+#[target_feature(enable = "sse4.1")]
+unsafe fn dot_product_sse(a: __m128i, b: __m128i) -> __m128i {
+    use std::arch::x86_64::*;
 
-    // #[bench]
-    // fn bench_vec_dot_q8_neon_unrolled(b: &mut Bencher) {
-    //     let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-    //     let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-    //     b.iter(|| vec_dot_q8_neon_unrolled(TEST_ELEMS, &v1, &v2));
-    // }
+    // 解包低8位到16位
+    let a_low = _mm_cvtepi8_epi16(a);
+    let b_low = _mm_cvtepi8_epi16(b);
 
-    // #[bench]
-    // fn bench_vec_dot_q8_neon_unrolled_single_sum(b: &mut Bencher) {
-    //     let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-    //     let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-    //     b.iter(|| vec_dot_q8_neon_unrolled_single_sum(TEST_ELEMS, &v1, &v2));
-    // }
+    // 解包高8位到16位
+    let a_high = _mm_cvtepi8_epi16(_mm_srli_si128(a, 8));
+    let b_high = _mm_cvtepi8_epi16(_mm_srli_si128(b, 8));
 
-    // #[bench]
-    // fn bench_vec_dot_q8_neon_unrolled_vfma(b: &mut Bencher) {
-    //     let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-    //     let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-    //     b.iter(|| vec_dot_q8_neon_unrolled_vfma(TEST_ELEMS, &v1, &v2));
-    // }
+    // 计算乘加
+    let prod_low = _mm_madd_epi16(a_low, b_low);
+    let prod_high = _mm_madd_epi16(a_high, b_high);
+
+    // 合并结果
+    _mm_add_epi32(prod_low, prod_high)
+}
+
+// SSE水平求和辅助函数
+#[target_feature(enable = "sse,sse3")]
+unsafe fn horizontal_sum_sse(v: __m128) -> f32 {
+    use std::arch::x86_64::*;
+
+    // 水平求和：交换高低64位并相加
+    let shuf = _mm_movehdup_ps(v);   // 复制高部分到低部分 (b,b,a,a)
+    let sum1 = _mm_add_ps(v, shuf);  // (a+b, b+a, ...)
+
+    // 移动高64位到低64位
+    let movhl = _mm_movehl_ps(shuf, sum1); // 移动高64位到低64位
+    let sum2 = _mm_add_ss(sum1, movhl);    // 标量加法
+
+    _mm_cvtss_f32(sum2)
 }

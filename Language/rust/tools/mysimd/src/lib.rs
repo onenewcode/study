@@ -15,21 +15,31 @@ pub struct BlockQ8_0 {
     qs: [i8; 32], // quants
 }
 
-pub fn vec_dot_q8_naive(n: usize, x: &[BlockQ8_0], y: &[BlockQ8_0]) -> f32 {
-    let mut result: f32 = 0.0;
-    for i in 0..(n / 32) {
-        let mut tmp = 0.0;
+pub fn vec_dot_q8_naive(blocks: usize, x: &[BlockQ8_0], y: &[BlockQ8_0]) -> f32 {
+    let mut result = 0.0;
+
+    for i in 0..blocks {
+        let xi = &x[i];
+        let yi = &y[i];
+
+        let d_x = xi.d as f32;
+        let d_y = yi.d as f32;
+
+        let mut sum = 0.0;
+
         for j in 0..32 {
-            tmp += (x[i].qs[j] as i32 * y[i].qs[j] as i32) as f32;
+            sum += (xi.qs[j] as i32 * yi.qs[j] as i32) as f32;
         }
-        result += tmp * x[i as usize].d as f32 * y[i as usize].d as f32;
+
+        result += sum * d_x * d_y;
     }
+
     result
 }
 
-pub fn vec_dot_q8_stdsimd(n: usize, x: &[BlockQ8_0], y: &[BlockQ8_0]) -> f32 {
+pub fn vec_dot_q8_stdsimd(blocks: usize, x: &[BlockQ8_0], y: &[BlockQ8_0]) -> f32 {
     let mut sumf: f32 = 0.0;
-    for i in 0..n / 32 {
+    for i in 0..blocks {
         let mut sumi: i32 = 0;
         for j in 0..8 {
             let ax = i32x4::from_array([
@@ -51,37 +61,85 @@ pub fn vec_dot_q8_stdsimd(n: usize, x: &[BlockQ8_0], y: &[BlockQ8_0]) -> f32 {
 
     sumf
 }
-// generate a random vector of BlockQ8_0
-fn gen_rand_block_q8_0() -> BlockQ8_0 {
-    let mut rng = rand::rng();
-    let d: f32 = rng.random_range(-10.0..10.0);
-    let mut qs: [i8; 32] = [0; 32];
-    for i in 0..32 {
-        qs[i] = rng.random();
-    }
-    BlockQ8_0 { d: d as f16, qs }
-}
 
-pub fn gen_rand_block_q8_0_vec(n: usize) -> Vec<BlockQ8_0> {
-    let mut v: Vec<BlockQ8_0> = Vec::with_capacity(n);
-    for _ in 0..n {
-        v.push(gen_rand_block_q8_0());
-    }
-    v
-}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::Rng;
     extern crate test;
+    use test::Bencher;
+
+    const TEST_BLOCKS: usize = 1000;
+    // generate a random vector of BlockQ8_0
+    fn gen_rand_block_q8_0() -> BlockQ8_0 {
+        let mut rng = rand::rng();
+        let d: f32 = rng.random_range(-10.0..10.0);
+        let mut qs: [i8; 32] = [0; 32];
+        for i in 0..32 {
+            qs[i] = rng.random();
+        }
+        BlockQ8_0 { d: d as f16, qs }
+    }
+
+    fn gen_rand_block_q8_0_vec(n: usize) -> Vec<BlockQ8_0> {
+        let mut v: Vec<BlockQ8_0> = Vec::with_capacity(n);
+        for _ in 0..n {
+            v.push(gen_rand_block_q8_0());
+        }
+        v
+    }
 
     #[test]
-    fn test_vec_dot_q8() {
-        let v1 = gen_rand_block_q8_0_vec(4);
-        let v2 = gen_rand_block_q8_0_vec(4);
+    fn test_vec_dot_q8_stdsimd() {
+        let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+        let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
 
-        let naive_result = vec_dot_q8_naive(64, &v1, &v2);
-        let result = vec_dot_q8_stdsimd(64, &v1, &v2);
-        assert!((result - naive_result).abs() < 1e-2);
+        let naive_result = vec_dot_q8_naive(TEST_BLOCKS, &v1, &v2);
+        let result = vec_dot_q8_stdsimd(TEST_BLOCKS, &v1, &v2);
+        assert!((result - naive_result).abs() < 1e-5);
     }
+
+    #[bench]
+    fn bench_vec_dot_q8_naive(b: &mut Bencher) {
+        let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+        let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+        b.iter(|| vec_dot_q8_naive(TEST_BLOCKS, &v1, &v2));
+    }
+
+#[test]
+fn test_vec_dot_q8_avx() {
+    if is_x86_feature_detected!("avx") {
+        let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+        let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+
+        let naive_result = vec_dot_q8_naive(TEST_BLOCKS, &v1, &v2);
+
+        // Wrap the call in an `unsafe` block
+        let result = unsafe {
+            crate::x86_x64::vec_dot_q8_avx( TEST_BLOCKS,&v1, &v2)
+        };
+
+        assert!((result - naive_result).abs() < 1e-2);
+    } else {
+        println!("AVX not supported, skipping test");
+    }
+}
+
+    #[bench]
+    fn bench_vec_dot_q8_stdsimd(b: &mut Bencher) {
+        let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+        let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+        b.iter(|| vec_dot_q8_stdsimd(TEST_BLOCKS, &v1, &v2));
+    }
+    // #[bench]
+    // fn bench_vec_dot_q8_naive(b: &mut Bencher) {
+    //     let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+    //     let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+    //     b.iter(|| x86_x64::vec_dot_q8(TEST_BLOCKS, &v1, &v2));
+    // }
+    // #[bench]
+    // fn bench_vec_dot_q8_naive(b: &mut Bencher) {
+    //     let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+    //     let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+    //     b.iter(|| x86_x64::vec_dot_q8(TEST_BLOCKS, &v1, &v2));
+    // }
 }
