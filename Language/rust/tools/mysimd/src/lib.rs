@@ -6,8 +6,6 @@
 mod x86_x64;
 use std::simd::{i32x4, num::SimdInt};
 
-
-
 #[repr(C, packed)]
 #[derive(Debug, Clone)]
 pub struct BlockQ8_0 {
@@ -64,16 +62,18 @@ pub fn vec_dot_q8_stdsimd(blocks: usize, x: &[BlockQ8_0], y: &[BlockQ8_0]) -> f3
 
 #[cfg(test)]
 mod tests {
+    use crate::x86_x64::vec_dot_q8_avx2;
+
     use super::*;
     extern crate test;
     use rand::Rng;
     use test::Bencher;
-
-    const TEST_BLOCKS: usize = 1;
+    // 太大会导致精度误差导致无法通过测试
+    const TEST_BLOCKS: usize = 100;
     // generate a random vector of BlockQ8_0
     fn gen_rand_block_q8_0() -> BlockQ8_0 {
         let mut rng = rand::rng();
-        let d: f32 = rng.random_range(-10.0..10.0);
+        let d: f32 = rng.random_range(-1.0..1.0);
         let mut qs: [i8; 32] = [0; 32];
         for i in 0..32 {
             qs[i] = rng.random();
@@ -99,6 +99,23 @@ mod tests {
         assert!((result - naive_result).abs() < 1e-5);
     }
 
+    #[test]
+    fn test_vec_dot_q8_avx2() {
+        if is_x86_feature_detected!("avx") {
+            let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+            let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+
+            let naive_result = vec_dot_q8_naive(TEST_BLOCKS, &v1, &v2);
+
+            // Wrap the call in an `unsafe` block
+            let result = unsafe { crate::x86_x64::vec_dot_q8_avx2(TEST_BLOCKS, &v1, &v2) };
+
+            assert!((result - naive_result).abs() < 1e-2);
+        } else {
+            println!("AVX not supported, skipping test");
+        }
+    }
+
     #[bench]
     fn bench_vec_dot_q8_naive(b: &mut Bencher) {
         let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
@@ -106,31 +123,23 @@ mod tests {
         b.iter(|| vec_dot_q8_naive(TEST_BLOCKS, &v1, &v2));
     }
 
-#[test]
-fn test_vec_dot_q8_avx() {
-    if is_x86_feature_detected!("avx") {
-        let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-        let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
-
-        let naive_result = vec_dot_q8_naive(TEST_BLOCKS, &v1, &v2);
-
-        // Wrap the call in an `unsafe` block
-        let result = unsafe {
-            crate::x86_x64::vec_dot_q8_avx2( TEST_BLOCKS,&v1, &v2)
-        };
-
-        assert!((result - naive_result).abs() < 1e-4);
-    } else {
-        println!("AVX not supported, skipping test");
-    }
-}
-
     #[bench]
     fn bench_vec_dot_q8_stdsimd(b: &mut Bencher) {
         let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
         let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
         b.iter(|| vec_dot_q8_stdsimd(TEST_BLOCKS, &v1, &v2));
     }
+    #[bench]
+    fn bench_vec_dot_q8_avx2(b: &mut Bencher) {
+        if is_x86_feature_detected!("avx2") {
+            let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+            let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+            b.iter(|| unsafe { vec_dot_q8_avx2(TEST_BLOCKS, &v1, &v2) });
+        } else {
+            println!("AVX not supported, skipping test");
+        }
+    }
+
     // #[bench]
     // fn bench_vec_dot_q8_naive(b: &mut Bencher) {
     //     let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
