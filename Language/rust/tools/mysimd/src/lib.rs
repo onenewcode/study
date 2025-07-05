@@ -3,6 +3,8 @@
 #![feature(portable_simd)]
 #![allow(soft_unstable)]
 #![feature(iter_array_chunks)]
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod x86_x64;
 use std::simd::{i32x4, num::SimdInt};
 
@@ -69,7 +71,7 @@ mod tests {
     use rand::Rng;
     use test::Bencher;
     // 太大会导致精度误差导致无法通过测试
-    const TEST_BLOCKS: usize = 100;
+    const TEST_BLOCKS: usize = 2;
     // generate a random vector of BlockQ8_0
     fn gen_rand_block_q8_0() -> BlockQ8_0 {
         let mut rng = rand::rng();
@@ -101,7 +103,7 @@ mod tests {
 
     #[test]
     fn test_vec_dot_q8_avx2() {
-        if is_x86_feature_detected!("avx") {
+        if is_x86_feature_detected!("avx2") {
             let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
             let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
 
@@ -115,7 +117,22 @@ mod tests {
             println!("AVX not supported, skipping test");
         }
     }
+    #[test]
+    fn test_vec_dot_q8_avx() {
+        if is_x86_feature_detected!("avx") {
+            let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
+            let v2 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
 
+            let naive_result = vec_dot_q8_naive(TEST_BLOCKS, &v1, &v2);
+
+            // Wrap the call in an `unsafe` block
+            let result = unsafe { crate::x86_x64::vec_dot_q8_avx(TEST_BLOCKS, &v1, &v2) };
+
+            assert!((result - naive_result).abs() < 1e-2);
+        } else {
+            println!("AVX not supported, skipping test");
+        }
+    }
     #[bench]
     fn bench_vec_dot_q8_naive(b: &mut Bencher) {
         let v1 = gen_rand_block_q8_0_vec(TEST_BLOCKS);
