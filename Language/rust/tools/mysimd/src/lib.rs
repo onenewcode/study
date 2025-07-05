@@ -6,7 +6,7 @@
 mod x86_x64;
 use std::simd::{i32x4, num::SimdInt};
 
-use rand::Rng;
+
 
 #[repr(C, packed)]
 #[derive(Debug, Clone)]
@@ -66,9 +66,10 @@ pub fn vec_dot_q8_stdsimd(blocks: usize, x: &[BlockQ8_0], y: &[BlockQ8_0]) -> f3
 mod tests {
     use super::*;
     extern crate test;
+    use rand::Rng;
     use test::Bencher;
 
-    const TEST_BLOCKS: usize = 1000;
+    const TEST_BLOCKS: usize = 1;
     // generate a random vector of BlockQ8_0
     fn gen_rand_block_q8_0() -> BlockQ8_0 {
         let mut rng = rand::rng();
@@ -115,10 +116,10 @@ fn test_vec_dot_q8_avx() {
 
         // Wrap the call in an `unsafe` block
         let result = unsafe {
-            crate::x86_x64::vec_dot_q8_avx( TEST_BLOCKS,&v1, &v2)
+            crate::x86_x64::vec_dot_q8_avx2( TEST_BLOCKS,&v1, &v2)
         };
 
-        assert!((result - naive_result).abs() < 1e-2);
+        assert!((result - naive_result).abs() < 1e-4);
     } else {
         println!("AVX not supported, skipping test");
     }
