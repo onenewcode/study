@@ -9,40 +9,23 @@ struct kv_cache {
 };
 
 template <typename T>
-__device__ kv_cache<T> locate_cache(
-    T *const *pages,
-    int64_t sbuf,      // sequence stride
-    int64_t skv,       //   k to v stride
-    int64_t sh,        //  kv head stride
-    uint64_t const bs, // context tile
-    uint64_t const head,
-    uint64_t const pos) {
-    sh *= head;
-    sbuf *= pos % bs;
-    uint8_t *page = (uint8_t *)pages[pos / bs];
-    return kv_cache{
-        (T *)(page + sh + sbuf),
-        (T *)(page + sh + sbuf + skv),
-    };
-}
-template <typename T>
 __device__ void __attn(
-    T *const **kv_pages,
-    T *const *q_,           // b [n@ x d]
-    T **o_,                 // b[n@ x d]
-    bool *const *mask_,     // b [n x s]
-    T *const *m,            // b [s]
-    T *const *l,            // b [s]
-    uint64_t const *n,      // b [sequence length】
+    T *const **kv_pages,    // [batch][page]
+    T *const *q_,           // batch [n@ x d]
+    T **o_,                 // batch [n@ x d]
+    bool *const *mask_,     // batch [n x s]
+    T **m,                  // batch [s]
+    T **l,                  // batch [s]
+    uint64_t const *n,      // batch [sequence length]
     uint64_t const d,       // head dim
-    uint64_t const *ts,     // b 【s/bs】
+    uint64_t const *ts,     // batch [s/bs]
     uint64_t const bs,      // context tile
     uint64_t const g,       // GQA
-    int64_t const sq,       //     q stride 默认连续长度为d
-    int64_t const so,       //     o stride 默认连续长度为d
-    int64_t const *kv_sbuf, //   b[sequence stride]
-    int64_t const *kv_skv,  //   b [k to v stride]
-    int64_t const *kv_sh,   // b [kv head stride]
+    int64_t const sq,       // q stride
+    int64_t const so,       // o stride
+    int64_t const *kv_sbuf, // batch [sequence stride]
+    int64_t const *kv_skv,  // batch [k to v stride]
+    int64_t const *kv_sh,   // batch [kv head stride]
     float const scale) {
     // (batch x head) x (bn)
     uint64_t const b = blockIdx.y;
@@ -50,28 +33,48 @@ __device__ void __attn(
     uint64_t const bn = blockDim.x;
     uint64_t const it = threadIdx.x;
     uint64_t const tn = (n[b] + bn - 1) / bn;
+
+    // 当前批次参数
+    uint64_t const n_b = n[b];
+    uint64_t const ts_b = ts[b];
+    int64_t const kv_sbuf_b = kv_sbuf[b];
+    int64_t const kv_skv_b = kv_skv[b];
+    int64_t const kv_sh_b = kv_sh[b];
+
     // 目前把所有维度当作连续的
     extern __shared__ T sram[];
     T *kj = sram;
     T *vj = sram + bs * d;
-    const T *q = q_[b] + head * n * d;
-    T *o = o_[b] + head * n * d;
+
+    // 当前批次指针
+    T const *q_batch = q_[b];
+    T *o_batch = o_[b];
+    bool const *mask_batch = mask_[b];
+    T *m_batch = m[b];
+    T *l_batch = l[b];
+    T *const *pages_batch = kv_pages[b];
+
+    // 当前头在Q/K/V中的偏移
+    T const *q = q_batch + head * n_b * d;
+    T *o = o_batch + head * n_b * d;
+
     for (uint64_t iqb = 0; iqb < tn; ++iqb) {
         uint64_t iq = iqb * bn + it;
-        if (iq >= n[b]) {
+        if (iq >= n_b) {
             continue;
         }
 
-        T mi = m[b][head * n[b] + iq];
-        T li = l[b][head * n[b] + iq];
+        // 加载当前查询位置的状态
+        T mi = m_batch[head * n_b + iq];
+        T li = l_batch[head * n_b + iq];
         T *oi = o + iq * d;
 
-        for (uint64_t ikvb = 0; ikvb < ts; ++ikvb) {
+        for (uint64_t ikvb = 0; ikvb < ts_b; ++ikvb) {
             // 加载 kv block 到共享内存
             {
                 uint64_t const end = (ikvb + 1) * bs;
                 for (uint64_t ikv = ikvb * bs + it, i = it; ikv < end; ikv += bn, i += bn) {
-                    kv_cache<T> cache = locate_cache<T>(kv_pages[b], kv_sbuf[b], kv_skv[b], kv_sh[b], bs, head / g, ikv);
+                    kv_cache<T> cache = locate_cache<T>(pages_batch, kv_sbuf_b, kv_skv_b, kv_sh_b, bs, head / g, ikv);
                     for (uint64_t j = 0; j < d; ++j) {
                         kj[i * d + j] = cache.k[j];
                         vj[i * d + j] = cache.v[j];
@@ -79,10 +82,9 @@ __device__ void __attn(
                 }
                 __syncthreads();
             }
-
             // 加载 q_i 和 mask
             T *qi_val = new T[d];
-            bool const *mask = mask_[b] + iq * ts[b] * bs + ikvb * bs;
+            bool const *mask = mask_batch + iq * ts[b] * bs + ikvb * bs;
 
             for (uint64_t j = 0; j < d; ++j) {
                 qi_val[j] = q[iq * d + j];
@@ -91,6 +93,7 @@ __device__ void __attn(
             // 计算注意力分数
             T *scores = new T[d];
             T mi_local = -CUDART_INF_F;
+
             for (uint64_t i = 0; i < bs; ++i) {
                 if (!mask[i]) {
                     scores[i] = -CUDART_INF_F;
@@ -106,6 +109,7 @@ __device__ void __attn(
                 }
             }
 
+            // 更新softmax状态
             T mi_new = max(mi, mi_local);
             T sum = 0.0;
 
@@ -132,13 +136,13 @@ __device__ void __attn(
                 }
                 oi[j] = oi[j] * exp_old * li * rdi + v_acc * rdi;
             }
-
             mi = mi_new;
             li = li_new;
         }
-
-        m[b][head * n[b] + iq] = mi;
-        l[b][head * n[b] + iq] = li;
+    __syncthreads(); // 确保共享内存使用完成
+        // 保存最终状态
+        m_batch[head * n_b + iq] = mi;
+        l_batch[head * n_b + iq] = li;
     }
 }
 
