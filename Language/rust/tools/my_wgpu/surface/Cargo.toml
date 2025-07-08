@@ -1,0 +1,21 @@
+[package]
+name = "surface"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cfg-if.workspace=true
+env_logger.workspace=true
+log.workspace=true
+parking_lot.workspace=true
+winit.workspace=true
+wgpu.workspace=true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# 需要避免在 wasm 中添加 pollster 依赖，否则会导致 wasm 加载时报错：
+# An error occurred loading "XXX": TypeError: Failed to resolve module specifier "env". Relative references must start with either "/", "./", or "../".
+pollster.workspace = true
+
+[[bin]]
+name = "surface"
+path = "src/main.rs"

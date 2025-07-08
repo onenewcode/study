@@ -1,0 +1,7 @@
+[package]
+name = "my_polars"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+polars = { version = "0.50.0", features = ["lazy"] }

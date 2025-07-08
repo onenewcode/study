@@ -18,7 +18,5 @@ cmake --build build --config Debug -j8
 进行转换
 
 ```shell
-python convert_hf_to_gguf.py "E:\deepseek\DeepSeek-R1-Distill-Qwen-7B" \
-    --outfile "E:\deepseek\DeepSeek-R1-Distill-Qwen-7B\DeepSeek-R1-Distill-Qwen-7B.gguf" \
-    --outtype f16
+python convert_hf_to_gguf.py "E:\deepseek\DeepSeek-R1-Distill-Qwen-7B" --outtype f16
 ```

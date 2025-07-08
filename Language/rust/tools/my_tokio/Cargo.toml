@@ -1,0 +1,15 @@
+[package]
+name = "my_tokio"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+
+[profile.dev.package.huge-mostly-unused-dependency]
+hint-mostly-unused = true
+
+[profile.release.package.huge-mostly-unused-dependency]
+hint-mostly-unused = true

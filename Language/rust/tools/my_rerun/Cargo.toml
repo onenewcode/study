@@ -1,0 +1,9 @@
+[package]
+name = "my_rerun"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rerun = "0.24.0"
+rand = "0.9"
+itertools = "0.14"

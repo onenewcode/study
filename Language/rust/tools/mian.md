@@ -13,3 +13,21 @@
 ## 标准库
 
 - simd
+
+## 绘图工具
+
+- charts-rs 类似plotters
+- plotters 基本绘图工具
+- Perspective 大数据分析用于金融
+
+## 数据分析
+
+- polars DataFrame
+
+## cv
+
+- kornia-rs
+
+## 可视化
+
+- rerun 多模态数据集可视化
