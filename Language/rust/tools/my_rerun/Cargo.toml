@@ -1,9 +1,15 @@
-[package]
-name = "my_rerun"
-version = "0.1.0"
+[workspace]
+resolver = "3"
+members = ["my_log"]
+# exclude = ["code/showcase/imgui-demo", "code/showcase/pong"]
+
+
+[workspace.package]
 edition = "2024"
 
-[dependencies]
-rerun = "0.24.0"
+[workspace.dependencies]
+rerun = { version = "0.24.0", features = ["clap"] }
 rand = "0.9"
 itertools = "0.14"
+anyhow = "1.0"
+clap = { version = "4.0", features = ["derive"] }

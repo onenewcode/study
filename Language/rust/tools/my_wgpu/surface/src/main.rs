@@ -69,8 +69,9 @@ impl WgpuApp {
             backends: wgpu::Backends::all(),
             ..Default::default()
         });
+        // 创建一个平面
         let surface = instance.create_surface(window.clone()).unwrap();
-
+        // 实例化适配器
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
